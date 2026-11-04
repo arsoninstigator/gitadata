@@ -73,6 +73,9 @@ ui says so. never run that way on a shared host.
 - the bottom bar counts pending edits, names the branches they will rewrite, and
   offers preview and apply. preview is the whole point: it lists old sha to new
   sha per ref before anything moves.
+- dark only, on an even `#121212` surface, poppins for text and mono for shas.
+  icons come from a pinned lucide build, and every control keeps its label, so a
+  blocked cdn costs decoration rather than function.
 
 ## how it works
 
