@@ -85,7 +85,7 @@ def main() -> int:
         S.SESSION_ROOT = os.path.join(tmp, "sessions")
 
         print("\n[session] clone, read graph")
-        session = S.create("arson", "gitadata", "dummy-token")
+        session = S.create("arson", "gitadata", "dummy-token", user_id=175415090)
         check("session dir exists", os.path.isdir(session.path))
         check("partial clone requested", "blob:none" in pathlib.Path(session.path, "config").read_text())
         check("base refs captured at clone", "refs/heads/main" in session.base_refs)
@@ -145,6 +145,16 @@ def main() -> int:
         stamps = S.backups(session.id)["snapshots"]
         check("snapshots listed", len(stamps) >= 1, str(stamps))
 
+        print("\n[ownership] another user cannot touch this session")
+        try:
+            S.graph(session.id, user_id=999)
+            check("stranger is refused", False)
+        except S.SessionError as exc:
+            check("stranger is refused", exc.status == 404, str(exc))
+        check("owner still allowed", len(S.graph(session.id, user_id=175415090)["commits"]) >= 1)
+        check("listing is scoped", S.sessions_snapshot(999) == [])
+        check("owner listing has it", len(S.sessions_snapshot(175415090)) == 1)
+
         print("\n[teardown] destroy and orphan sweep")
         S.destroy(session.id)
         check("session dir removed", not os.path.isdir(os.path.join(S.SESSION_ROOT, session.id)))
@@ -158,7 +168,7 @@ def main() -> int:
         git(tmp, "init", "--bare", "-q", "-b", "main", empty_origin)
         G.has_commits = lambda token, owner, repo, branch: False
         G.https_url = lambda owner, repo: empty_origin
-        empty = S.create("arson", "fresh", "dummy-token")
+        empty = S.create("arson", "fresh", "dummy-token", user_id=175415090)
         check("marked empty", empty.empty is True)
         check("graph degrades cleanly", S.graph(empty.id)["empty"] is True)
         check("no commits to plan against", S.graph(empty.id)["commits"] == [])
