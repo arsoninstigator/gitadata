@@ -9,6 +9,7 @@ const PAD = 18;
 const GRAPH_LEFT = 8;
 
 const state = {
+  authConfig: null,
   session: null,
   repo: null,
   defaultBranch: null,
@@ -37,13 +38,55 @@ const el = (tag, attrs = {}, children = []) => {
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { "content-type": "application/json" },
+    credentials: "same-origin",
     ...options,
     body: options.body ? JSON.stringify(options.body) : undefined,
   });
   const text = await res.text();
   const data = text ? JSON.parse(text) : {};
+  if (res.status === 401) {
+    await showSignIn(data.detail);
+    throw new Error("sign in with github");
+  }
   if (!res.ok) throw new Error(data.detail || res.statusText);
   return data;
+}
+
+async function showSignIn(reason) {
+  state.session = null;
+  state.graph = null;
+  $("#who").textContent = "signed out";
+  $("#signout").hidden = true;
+  $("#repo-label").textContent = "no repository";
+  $("#dirty").replaceChildren();
+  $("#inspector").className = "inspector idle";
+  $("#inspector").replaceChildren(el("p", { class: "empty", text: "select a commit" }));
+  $("#refs").replaceChildren();
+
+  let config = state.authConfig;
+  if (!config) {
+    try {
+      config = await (await fetch("/api/auth/config")).json();
+      state.authConfig = config;
+    } catch {
+      config = { oauth: false, dev: false };
+    }
+  }
+
+  const body = el("div", { class: "signin" }, [
+    el("h2", { text: "gitadata" }),
+    el("p", { class: "muted", text: "edit the metadata of commits that are already pushed. you sign in with your own github account, and the token stays on the server." }),
+  ]);
+  if (config.oauth) {
+    body.append(el("a", { class: "primary solid", href: "/auth/github/start", text: "sign in with github" }));
+  } else {
+    body.append(
+      el("p", { class: "warn", text: "this server has no github oauth app configured yet. set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET, or run it with GITADATA_DEV_PAT=1 for local work." })
+    );
+  }
+  if (reason) body.append(el("p", { class: "muted", text: reason }));
+  $("#graph").replaceChildren(body);
+  status("not signed in");
 }
 
 function status(message, kind = "") {
@@ -476,14 +519,23 @@ async function boot() {
       resizeTimer = setTimeout(renderGraph, 120);
     });
 
-    const me = await api("/api/github/me");
-    $("#who").textContent = me.login;
+    const me = await api("/api/me");
+    $("#who").textContent = (me.dev ? "dev: " : "") + me.login;
+    const signout = $("#signout");
+    if (!me.dev) {
+      signout.hidden = false;
+      signout.addEventListener("click", async () => {
+        await fetch("/auth/logout", { method: "POST", credentials: "same-origin" });
+        showSignIn("signed out");
+      });
+    }
     const { repos } = await api("/api/github/repos?limit=100");
     $("#repo-options").replaceChildren(
       ...repos.map((repo) => el("option", { value: repo.full_name, text: `${repo.full_name} (${repo.size_kb} kb)` }))
     );
   } catch (err) {
     status(err.message, "error");
+    return;
   }
   renderInspector();
   renderDirty();

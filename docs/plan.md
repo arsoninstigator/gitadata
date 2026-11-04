@@ -28,13 +28,29 @@ no amount of ui makes that untrue. so the product is mostly a trust product:
 ```
 browser (graph, inspector, plan preview)
    |
-   |  rest: session -> graph -> plan -> apply -> undo
+   |  cookie session -> rest: session -> graph -> plan -> apply -> undo
    v
 fastapi service (python)
+   - github oauth per visitor: pkce, one-time state, http-only signed cookie
    - one bare, blob-less clone per session in a temp dir, deleted after
    - the rewrite engine, which knows nothing about http
-   - github app installation token per request (today: one pat from env)
+   - no server-wide token anywhere
 ```
+
+## auth
+
+each visitor authorizes their own github account and the token lives only in
+this process, addressed by a signed cookie. sessions are owned, so another
+user's session id is a 404 rather than a 403.
+
+the scope is `repo`, which is broad: github has no narrower oauth scope that
+allows a force-push. the honest narrower option is a github app with
+`contents: write`, installed on chosen repositories, issuing one hour
+installation tokens. that is the right end state and it replaces `oauth.py`
+without touching the engine, the sessions or the ui.
+
+local development borrows `$GITHUB_TOKEN` behind `GITADATA_DEV_PAT=1`, and
+`/api/me` labels itself as dev so nobody mistakes it for a signed-in user.
 
 python for the engine, because that is where the logic is and it is testable
 without a browser. a build-free vanilla frontend for the graph, because the

@@ -39,6 +39,7 @@ class Session:
     owner: str
     repo: str
     path: str
+    user_id: int                   # the github user who opened this session
     default_branch: str | None
     base_refs: dict[str, str]      # remote refs at clone time: refname -> sha
     empty: bool
@@ -59,7 +60,7 @@ _registry_lock = threading.Lock()
 # lifecycle
 # --------------------------------------------------------------------------
 
-def create(owner: str, repo: str, token: str) -> Session:
+def create(owner: str, repo: str, token: str, user_id: int) -> Session:
     info = G.get_repo(token, owner, repo)  # also validates the name
     if not (info.get("permissions") or {}).get("push"):
         raise SessionError(f"no write access to {owner}/{repo}", 403)
@@ -99,6 +100,7 @@ def create(owner: str, repo: str, token: str) -> Session:
     now = time.time()
     session = Session(
         id=sid,
+        user_id=user_id,
         owner=owner,
         repo=repo,
         path=path,
@@ -113,10 +115,13 @@ def create(owner: str, repo: str, token: str) -> Session:
     return session
 
 
-def get(sid: str) -> Session:
+def get(sid: str, user_id: int | None = None) -> Session:
+    """Look up a session, and treat another user's session as nonexistent."""
     with _registry_lock:
         session = _sessions.get(sid)
     if session is None:
+        raise SessionError("unknown session", 404)
+    if user_id is not None and session.user_id != user_id:
         raise SessionError("unknown session", 404)
     session.last_used = time.time()
     return session
@@ -171,8 +176,8 @@ def sweep(ttl: int = SESSION_TTL) -> list[str]:
 # reading
 # --------------------------------------------------------------------------
 
-def graph(sid: str) -> dict:
-    session = get(sid)
+def graph(sid: str, user_id: int | None = None) -> dict:
+    session = get(sid, user_id)
     with session.lock:
         refs = E.read_refs(session.path, ("refs/heads", "refs/tags"))
         if not refs:
@@ -346,8 +351,8 @@ def _precheck_notes(protected: list[str], pulls: list[dict]) -> list[str]:
     return notes
 
 
-def plan_edits(sid: str, raw_edits: dict, refs: list[str] | None = None) -> dict:
-    session = get(sid)
+def plan_edits(sid: str, raw_edits: dict, refs: list[str] | None = None, user_id: int | None = None) -> dict:
+    session = get(sid, user_id)
     with session.lock:
         edits = build_edits(session, raw_edits)
         resolved = normalize_refs(session, refs)
@@ -366,8 +371,9 @@ def apply_edits(
     push: bool = False,
     remote: str = "origin",
     include_tags: bool = True,
+    user_id: int | None = None,
 ) -> dict:
-    session = get(sid)
+    session = get(sid, user_id)
     env = G.git_auth_env(token)
     with session.lock:
         edits = build_edits(session, raw_edits)
@@ -412,8 +418,8 @@ def apply_edits(
         return result
 
 
-def undo(sid: str, ts: str) -> dict:
-    session = get(sid)
+def undo(sid: str, ts: str, user_id: int | None = None) -> dict:
+    session = get(sid, user_id)
     with session.lock:
         try:
             restored = E.undo(session.path, ts)
@@ -422,12 +428,12 @@ def undo(sid: str, ts: str) -> dict:
     return {"restored": restored, "snapshot": ts}
 
 
-def backups(sid: str) -> dict:
-    session = get(sid)
+def backups(sid: str, user_id: int | None = None) -> dict:
+    session = get(sid, user_id)
     return {"snapshots": E.list_backups(session.path)}
 
 
-def sessions_snapshot() -> list[dict]:
+def sessions_snapshot(user_id: int | None = None) -> list[dict]:
     with _registry_lock:
         return [
             {
@@ -438,4 +444,5 @@ def sessions_snapshot() -> list[dict]:
                 "empty": s.empty,
             }
             for s in _sessions.values()
+            if user_id is None or s.user_id == user_id
         ]
