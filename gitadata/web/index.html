@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>gitadata</title>
+    <link rel="stylesheet" href="/web/style.css" />
+  </head>
+  <body>
+    <header class="bar">
+      <div class="brand">
+        <span class="mark">gitadata</span>
+        <span class="repo" id="repo-label">no repository</span>
+      </div>
+      <form id="open" class="open">
+        <input id="repo-input" list="repo-options" placeholder="owner/repo" autocomplete="off" />
+        <datalist id="repo-options"></datalist>
+        <button class="primary" type="submit">open</button>
+      </form>
+      <div class="who"><span id="who">...</span></div>
+    </header>
+
+    <main class="layout">
+      <section class="canvas">
+        <div class="canvas-head">
+          <div class="legend">right-click a commit to edit its metadata</div>
+          <div class="refs" id="refs"></div>
+        </div>
+        <div class="graph" id="graph">
+          <p class="empty">open a repository to draw its history</p>
+        </div>
+        <div class="status" id="status"></div>
+        <div class="dirty" id="dirty"></div>
+      </section>
+
+      <aside class="side">
+        <div class="inspector idle" id="inspector">
+          <p class="empty">select a commit</p>
+        </div>
+        <div class="report" id="report"></div>
+      </aside>
+    </main>
+
+    <script type="module" src="/web/app.js"></script>
+  </body>
+</html>
