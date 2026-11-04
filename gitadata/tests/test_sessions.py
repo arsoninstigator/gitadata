@@ -174,6 +174,61 @@ def main() -> int:
         check("no commits to plan against", S.graph(empty.id)["commits"] == [])
         S.destroy(empty.id)
 
+        print("\n[branches] the graph can be narrowed to one branch")
+        branched = os.path.join(tmp, "branched.git")
+        git(tmp, "init", "--bare", "-q", "-b", "main", branched)
+        git(branched, "config", "uploadpack.allowFilter", "true")
+        bwork = os.path.join(tmp, "bwork")
+        git(tmp, "clone", "-q", branched, bwork)
+        git(bwork, "config", "user.name", "Dev Bot")
+        git(bwork, "config", "user.email", "dev@example.com")
+        for index in range(2):
+            pathlib.Path(bwork, f"m{index}.txt").write_text(f"{index}\n")
+            git(bwork, "add", f"m{index}.txt")
+            git(bwork, "commit", "-qm", f"main {index}")
+        git(bwork, "push", "-q", "-u", "origin", "main")
+        git(bwork, "checkout", "-q", "-b", "feature")
+        pathlib.Path(bwork, "f.txt").write_text("feature\n")
+        git(bwork, "add", "f.txt")
+        git(bwork, "commit", "-qm", "feature work")
+        git(bwork, "push", "-q", "-u", "origin", "feature")
+
+        G.has_commits = lambda token, owner, repo, branch: True
+        G.https_url = lambda owner, repo: branched
+        multi = S.create("arson", "branched", "dummy-token", user_id=175415090)
+
+        everything = S.graph(multi.id, user_id=175415090)
+        check("all refs walks both branches", len(everything["commits"]) == 3, str(len(everything["commits"])))
+        check("no view means everything", everything["view"] is None)
+        check("branches are listed", everything["branches"] == ["feature", "main"], str(everything["branches"]))
+
+        on_main = S.graph(multi.id, user_id=175415090, ref="main")
+        check("main is two commits", len(on_main["commits"]) == 2, str(len(on_main["commits"])))
+        check("view is the canonical ref", on_main["view"] == "refs/heads/main")
+        check("the feature commit is absent", all(c["subject"] != "feature work" for c in on_main["commits"]))
+
+        on_feature = S.graph(multi.id, user_id=175415090, ref="refs/heads/feature")
+        check("feature is three commits", len(on_feature["commits"]) == 3, str(len(on_feature["commits"])))
+        check("feature keeps its tip", "feature work" in [c["subject"] for c in on_feature["commits"]])
+
+        try:
+            S.graph(multi.id, user_id=175415090, ref="nope")
+            check("unknown branch refused", False)
+        except S.SessionError as exc:
+            check("unknown branch refused", exc.status == 400, str(exc))
+
+        scoped = S.plan_edits(
+            multi.id,
+            {on_feature["commits"][0]["sha"][:8]: {"message": "base retitled\n"}},
+            ["feature"],
+            user_id=175415090,
+        )
+        check("a scoped plan touches only that branch",
+              [r["ref"] for r in scoped["refs"] if r["changed"]] == ["refs/heads/feature"],
+              str([r["ref"] for r in scoped["refs"] if r["changed"]]))
+        check("main is not in the plan", "refs/heads/main" not in [r["ref"] for r in scoped["refs"]])
+        S.destroy(multi.id)
+
     print(f"\n{PASS} checks passed, {len(FAIL)} failed")
     for f in FAIL:
         print("  -", f)

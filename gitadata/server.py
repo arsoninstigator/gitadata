@@ -167,8 +167,9 @@ def list_sessions(user: CurrentUser) -> dict[str, Any]:
 
 
 @app.get("/api/sessions/{sid}/graph")
-def graph(sid: str, user: CurrentUser) -> dict[str, Any]:
-    return S.graph(sid, user.user_id)
+def graph(sid: str, user: CurrentUser, ref: str | None = None) -> dict[str, Any]:
+    """`ref` narrows the walk to one branch, e.g. ?ref=main or ?ref=refs/heads/main."""
+    return S.graph(sid, user.user_id, ref)
 
 
 @app.post("/api/sessions/{sid}/plan")

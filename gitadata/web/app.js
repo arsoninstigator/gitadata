@@ -1,5 +1,6 @@
-// gitadata ui: open a repo, read the graph, edit commit metadata, preview, apply.
-// plain modules, no build step. all copy is lowercase on purpose.
+// gitadata ui: pick a branch, read its graph, right-click a commit to edit its
+// metadata in the side panel, preview the rewrite, apply it. plain modules, no
+// build step. all copy is lowercase on purpose.
 
 import { layout, truncate } from "./graph.js";
 
@@ -13,8 +14,9 @@ const state = {
   session: null,
   repo: null,
   defaultBranch: null,
+  viewRef: null,     // null means every ref
+  scope: [],         // refs the rewrite will touch
   graph: null,
-  refs: [],          // [refs/heads/main, ...]
   selected: null,
   draft: {},         // sha -> fields
   plan: null,
@@ -29,7 +31,7 @@ const el = (tag, attrs = {}, children = []) => {
     if (k === "class") node.className = v;
     else if (k === "text") node.textContent = v;
     else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
-    else node.setAttribute(k, v);
+    else node.setAttribute(k, v === true ? "" : v);
   }
   for (const child of [].concat(children)) if (child) node.append(child);
   return node;
@@ -52,6 +54,12 @@ async function api(path, options = {}) {
   return data;
 }
 
+function status(message, kind = "") {
+  const bar = $("#status");
+  bar.textContent = message;
+  bar.className = "status " + kind;
+}
+
 async function showSignIn(reason) {
   state.session = null;
   state.graph = null;
@@ -59,9 +67,9 @@ async function showSignIn(reason) {
   $("#signout").hidden = true;
   $("#repo-label").textContent = "no repository";
   $("#dirty").replaceChildren();
+  $("#refs").replaceChildren();
   $("#inspector").className = "inspector idle";
   $("#inspector").replaceChildren(el("p", { class: "empty", text: "select a commit" }));
-  $("#refs").replaceChildren();
 
   let config = state.authConfig;
   if (!config) {
@@ -73,30 +81,30 @@ async function showSignIn(reason) {
     }
   }
 
-  const body = el("div", { class: "signin" }, [
+  const card = el("div", { class: "signin" }, [
     el("h2", { text: "gitadata" }),
-    el("p", { class: "muted", text: "edit the metadata of commits that are already pushed. you sign in with your own github account, and the token stays on the server." }),
+    el("p", {
+      class: "muted",
+      text: "edit the metadata of commits that are already pushed. you sign in with your own github account, and the token stays on the server.",
+    }),
   ]);
   if (config.oauth) {
-    body.append(el("a", { class: "primary solid", href: "/auth/github/start", text: "sign in with github" }));
+    card.append(el("a", { class: "primary solid", href: "/auth/github/start", text: "sign in with github" }));
   } else {
-    body.append(
-      el("p", { class: "warn", text: "this server has no github oauth app configured yet. set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET, or run it with GITADATA_DEV_PAT=1 for local work." })
+    card.append(
+      el("p", {
+        class: "warn",
+        text: "this server has no github oauth app configured yet. set GITHUB_OAUTH_CLIENT_ID and GITHUB_OAUTH_CLIENT_SECRET, or run it with GITADATA_DEV_PAT=1 for local work.",
+      })
     );
   }
-  if (reason) body.append(el("p", { class: "muted", text: reason }));
-  $("#graph").replaceChildren(body);
+  if (reason) card.append(el("p", { class: "muted", text: reason }));
+  $("#graph").replaceChildren(card);
   status("not signed in");
 }
 
-function status(message, kind = "") {
-  const bar = $("#status");
-  bar.textContent = message;
-  bar.className = "status " + kind;
-}
-
 // ---------------------------------------------------------------------------
-// session
+// session and branch switching
 // ---------------------------------------------------------------------------
 
 async function openRepo(name) {
@@ -107,30 +115,54 @@ async function openRepo(name) {
     state.session = session.session;
     state.repo = session.repo;
     state.defaultBranch = session.default_branch;
+    state.viewRef = session.default_branch ? `refs/heads/${session.default_branch}` : null;
     state.draft = {};
     state.plan = null;
     state.snapshot = null;
+    state.selected = null;
     $("#repo-label").textContent = session.repo;
     if (session.empty) {
       status("this repository has no commits yet", "warn");
       $("#graph").replaceChildren(el("p", { class: "empty", text: "nothing to draw yet" }));
       $("#refs").replaceChildren();
-      $("#inspector").classList.add("idle");
+      $("#inspector").className = "inspector idle";
+      $("#inspector").replaceChildren(el("p", { class: "empty", text: "select a commit" }));
       return;
     }
     await loadGraph();
-    status("loaded " + state.graph.commits.length + " commits");
+    status(`on ${branchLabel()}: ${state.graph.commits.length} commits reachable`);
+  } catch (err) {
+    status(err.message, "error");
+  }
+}
+
+function branchLabel() {
+  return state.viewRef ? state.viewRef.replace("refs/heads/", "") : "all refs";
+}
+
+async function switchView(ref) {
+  state.viewRef = ref || null;
+  state.selected = null;
+  state.draft = {};
+  state.plan = null;
+  try {
+    await loadGraph();
+    status(`on ${branchLabel()}: ${state.graph.commits.length} commits reachable`);
   } catch (err) {
     status(err.message, "error");
   }
 }
 
 async function loadGraph() {
-  const graph = await api(`/api/sessions/${state.session}/graph`);
+  const query = state.viewRef ? `?ref=${encodeURIComponent(state.viewRef)}` : "";
+  const graph = await api(`/api/sessions/${state.session}/graph${query}`);
   state.graph = graph;
-  state.refs = [graph.default_branch ? `refs/heads/${graph.default_branch}` : null].filter(Boolean);
+  state.viewRef = graph.view || null;
+  const branches = graph.refs.filter((r) => r.name.startsWith("refs/heads/")).map((r) => r.name);
+  state.scope = state.viewRef ? [state.viewRef] : branches;
   renderGraph();
   renderRefs();
+  renderInspector();
   renderDirty();
 }
 
@@ -145,7 +177,6 @@ function renderGraph() {
   const width = Math.max(360, (scroller.clientWidth || 900) - 2);
   const height = commits.length * ROW + PAD * 2;
 
-  // columns: lanes, subject, author, ref badges. the subject takes whatever is left.
   const laneWidth = model.laneCount * LANE + 24;
   const metaWidth = 150;
   const badgeWidth = commits.reduce((widest, c) => {
@@ -231,8 +262,7 @@ function renderGraph() {
     group.addEventListener("click", () => select(node.sha));
     group.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      select(node.sha);
-      openMenu(event.clientX, event.clientY, node.commit);
+      select(node.sha, { focus: true });
     });
     svg.append(group);
   }
@@ -241,44 +271,54 @@ function renderGraph() {
 }
 
 // ---------------------------------------------------------------------------
-// refs and edit scope
+// branch switcher
 // ---------------------------------------------------------------------------
 
 function renderRefs() {
-  const box = $("#refs");
-  box.replaceChildren(
-    ...state.graph.refs
-      .filter((ref) => ref.kind === "commit" || ref.name.startsWith("refs/heads/"))
-      .map((ref) =>
-        el("label", { class: "chip" }, [
-          el("input", {
-            type: "checkbox",
-            checked: state.refs.includes(ref.name) ? "checked" : null,
-            onchange: (event) => {
-              state.refs = event.target.checked
-                ? [...new Set([...state.refs, ref.name])]
-                : state.refs.filter((entry) => entry !== ref.name);
-              renderDirty();
-            },
-          }),
-          el("span", { text: ref.short }),
-        ])
-      )
-  );
+  const branches = state.graph.refs.filter((r) => r.name.startsWith("refs/heads/"));
+  const chips = [
+    el("button", {
+      class: "chip" + (state.viewRef ? "" : " active"),
+      text: "all refs",
+      title: "every branch and tag at once",
+      onclick: () => switchView(null),
+    }),
+    ...branches.map((ref) =>
+      el("button", {
+        class: "chip" + (state.viewRef === ref.name ? " active" : ""),
+        text: ref.short,
+        title: ref.commit.slice(0, 10),
+        onclick: () => switchView(ref.name),
+      })
+    ),
+  ];
+  $("#refs").replaceChildren(...chips);
+  $("#view-label").textContent = branchLabel();
 }
 
 // ---------------------------------------------------------------------------
-// inspector
+// selection and the side panel editor
 // ---------------------------------------------------------------------------
 
 function commitBySha(sha) {
   return state.graph.commits.find((c) => c.sha === sha);
 }
 
-function select(sha) {
+function select(sha, options = {}) {
   state.selected = sha;
   renderGraph();
   renderInspector();
+  if (options.focus) {
+    const panel = $("#inspector");
+    panel.classList.add("editing");
+    panel.scrollIntoView({ block: "nearest" });
+    const title = panel.querySelector("input");
+    if (title) {
+      title.focus();
+      title.select();
+    }
+    setTimeout(() => panel.classList.remove("editing"), 900);
+  }
 }
 
 function currentValues(commit) {
@@ -298,11 +338,14 @@ function renderInspector() {
   const commit = state.selected && commitBySha(state.selected);
   if (!commit) {
     panel.className = "inspector idle";
-    panel.replaceChildren(el("p", { class: "empty", text: "select a commit" }));
+    panel.replaceChildren(
+      el("p", { class: "empty", text: "click a commit to inspect it, right-click to edit it" })
+    );
     return;
   }
   panel.className = "inspector";
   const values = currentValues(commit);
+  const dirty = Boolean(state.draft[commit.sha]);
 
   const field = (label, key, value, type = "text") =>
     el("div", { class: "field" }, [
@@ -318,32 +361,50 @@ function renderInspector() {
     el("div", { class: "inspector-head" }, [
       el("code", { class: "sha", text: commit.sha.slice(0, 10) }),
       el("span", { class: "parents", text: (commit.parents || []).map((p) => p.slice(0, 7)).join(" ") }),
+      dirty ? el("span", { class: "dirty-dot", text: "edited" }) : null,
+      ...(commit.refs || []).map((label) => el("span", { class: "mini-badge", text: label })),
     ]),
     field("title", "title", values.subject),
     el("div", { class: "field" }, [
       el("label", { text: "description" }),
-      el("textarea", {
-        rows: "5",
-        oninput: (event) => setDraft(commit, "body", event.target.value),
-      }, [document.createTextNode(values.body)]),
+      el("textarea", { rows: "5", oninput: (event) => setDraft(commit, "body", event.target.value) }, [
+        document.createTextNode(values.body),
+      ]),
     ]),
     field("author name", "author_name", values.authorName),
     field("author email", "author_email", values.authorEmail),
     field("author date", "author_date", values.authorDate, "datetime-local"),
     field("committer date", "committer_date", values.committerDate, "datetime-local"),
     el("div", { class: "actions" }, [
-      el("button", { class: "ghost", text: "reset this commit", onclick: () => resetCommit(commit.sha) }),
       el("button", {
         class: "ghost",
         text: "drop claude co-author",
+        title: "strip co-authored-by lines that mention claude",
+        onclick: () => dropClaude(commit.sha),
+      }),
+      el("button", {
+        class: "ghost",
+        text: "copy sha",
         onclick: () => {
-          state.draft[commit.sha] = { ...(state.draft[commit.sha] || {}), strip_trailers_matching: "^co-authored-by:.*claude" };
-          renderDirty();
-          status("will strip co-authored-by lines mentioning claude on this commit");
+          navigator.clipboard?.writeText(commit.sha);
+          status("sha copied");
         },
+      }),
+      el("button", {
+        class: "ghost",
+        text: "reset this commit",
+        disabled: !dirty,
+        onclick: () => resetCommit(commit.sha),
       }),
     ])
   );
+}
+
+function dropClaude(sha) {
+  state.draft[sha] = { ...(state.draft[sha] || {}), strip_trailers_matching: "^co-authored-by:.*claude" };
+  renderInspector();
+  renderDirty();
+  status("will strip co-authored-by lines mentioning claude on this commit");
 }
 
 function setDraft(commit, key, value) {
@@ -360,6 +421,7 @@ function setDraft(commit, key, value) {
   else draft[key] = value;
   if (Object.keys(draft).length) state.draft[commit.sha] = draft;
   else delete state.draft[commit.sha];
+  renderInspector();
   renderDirty();
 }
 
@@ -367,38 +429,6 @@ function resetCommit(sha) {
   delete state.draft[sha];
   renderInspector();
   renderDirty();
-}
-
-// ---------------------------------------------------------------------------
-// context menu
-// ---------------------------------------------------------------------------
-
-function openMenu(x, y, commit) {
-  closeMenu();
-  const menu = el("div", { class: "menu", id: "menu" }, [
-    el("button", { text: "edit metadata", onclick: () => { closeMenu(); $("#inspector input")?.focus(); } }),
-    el("button", {
-      text: "remove claude co-author trailer",
-      onclick: () => {
-        state.draft[commit.sha] = { ...(state.draft[commit.sha] || {}), strip_trailers_matching: "^co-authored-by:.*claude" };
-        closeMenu();
-        renderInspector();
-        renderDirty();
-      },
-    }),
-    el("button", {
-      text: "copy sha",
-      onclick: () => { navigator.clipboard?.writeText(commit.sha); closeMenu(); status("sha copied"); },
-    }),
-  ]);
-  menu.style.left = x + "px";
-  menu.style.top = y + "px";
-  document.body.append(menu);
-  setTimeout(() => document.addEventListener("click", closeMenu, { once: true }), 0);
-}
-
-function closeMenu() {
-  document.getElementById("menu")?.remove();
 }
 
 // ---------------------------------------------------------------------------
@@ -426,15 +456,16 @@ function editsPayload() {
 function renderDirty() {
   const edits = editsPayload();
   const count = Object.keys(edits).length;
+  const scope = state.scope.map((r) => r.replace("refs/heads/", "")).join(", ") || "none";
   const bar = $("#dirty");
   bar.classList.toggle("has", count > 0);
   bar.replaceChildren(
     el("span", {
       text: count
-        ? `${count} commit${count === 1 ? "" : "s"} edited, scope: ${state.refs.map((r) => r.replace("refs/heads/", "")).join(", ") || "none"}`
-        : "no pending edits",
+        ? `${count} commit${count === 1 ? "" : "s"} edited, rewriting ${scope}`
+        : `no pending edits, rewriting ${scope}`,
     }),
-    el("input", { type: "checkbox", id: "push-toggle", checked: "checked" }),
+    el("input", { type: "checkbox", id: "push-toggle", checked: true }),
     el("label", { for: "push-toggle", text: "push to github" }),
     el("button", { class: "primary", text: "preview", disabled: count === 0, onclick: preview }),
     el("button", { class: "primary solid", text: "apply", disabled: count === 0, onclick: apply })
@@ -446,7 +477,7 @@ async function preview() {
     status("building plan ...");
     const plan = await api(`/api/sessions/${state.session}/plan`, {
       method: "POST",
-      body: { edits: editsPayload(), refs: state.refs },
+      body: { edits: editsPayload(), refs: state.scope },
     });
     state.plan = plan;
     const lines = [
@@ -455,7 +486,9 @@ async function preview() {
     ];
     if (plan.noop) lines.push(el("p", { class: "warn", text: "nothing would move" }));
     for (const ref of plan.refs.filter((r) => r.changed)) {
-      lines.push(el("p", { class: "ref-change", text: `${ref.ref}  ${ref.old.slice(0, 10)} -> ${ref.new.slice(0, 10)}` }));
+      lines.push(
+        el("p", { class: "ref-change", text: `${ref.ref}  ${ref.old.slice(0, 10)} -> ${ref.new.slice(0, 10)}` })
+      );
     }
     for (const warning of plan.warnings) lines.push(el("p", { class: "warn", text: warning }));
     $("#report").replaceChildren(...lines);
@@ -467,21 +500,23 @@ async function preview() {
 
 async function apply() {
   const push = $("#push-toggle")?.checked ?? true;
-  const label = push ? "rewriting and pushing" : "rewriting locally (no push)";
-  status(label + " ...");
+  status((push ? "rewriting and pushing" : "rewriting locally, no push") + " ...");
   try {
     const result = await api(`/api/sessions/${state.session}/apply`, {
       method: "POST",
-      body: { edits: editsPayload(), refs: state.refs, push },
+      body: { edits: editsPayload(), refs: state.scope, push },
     });
     state.snapshot = result.snapshot;
     state.draft = {};
     const lines = [el("h3", { text: result.plan.summary })];
-    lines.push(el("p", { class: "muted", text: `snapshot ${result.snapshot}${result.pushed ? ", pushed" : ", not pushed"}` }));
+    lines.push(
+      el("p", { class: "muted", text: `snapshot ${result.snapshot}${result.pushed ? ", pushed" : ", not pushed"}` })
+    );
     for (const note of result.prechecks?.notes || []) lines.push(el("p", { class: "warn", text: note }));
     if (result.push_output) lines.push(el("pre", { class: "out", text: result.push_output }));
     lines.push(el("button", { class: "ghost", text: "undo this rewrite", onclick: undo }));
     $("#report").replaceChildren(...lines);
+    state.selected = null;
     await loadGraph();
     status(result.pushed ? "rewritten and pushed" : "rewritten in the clone only", "ok");
   } catch (err) {
@@ -511,14 +546,15 @@ async function boot() {
     event.preventDefault();
     openRepo($("#repo-input").value.trim());
   });
-  try {
-    let resizeTimer = null;
-    window.addEventListener("resize", () => {
-      if (!state.graph) return;
-      clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(renderGraph, 120);
-    });
 
+  let resizeTimer = null;
+  window.addEventListener("resize", () => {
+    if (!state.graph) return;
+    clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(renderGraph, 120);
+  });
+
+  try {
     const me = await api("/api/me");
     $("#who").textContent = (me.dev ? "dev: " : "") + me.login;
     const signout = $("#signout");
@@ -537,6 +573,7 @@ async function boot() {
     status(err.message, "error");
     return;
   }
+
   renderInspector();
   renderDirty();
 

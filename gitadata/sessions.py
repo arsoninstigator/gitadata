@@ -176,21 +176,27 @@ def sweep(ttl: int = SESSION_TTL) -> list[str]:
 # reading
 # --------------------------------------------------------------------------
 
-def graph(sid: str, user_id: int | None = None) -> dict:
+def graph(sid: str, user_id: int | None = None, ref: str | None = None) -> dict:
+    """The commit graph, optionally narrowed to one branch's history."""
     session = get(sid, user_id)
     with session.lock:
         refs = E.read_refs(session.path, ("refs/heads", "refs/tags"))
+        view: str | None = None
+        if ref:
+            view = normalize_refs(session, [ref])[0]
         if not refs:
             return {
                 "session": session.id,
                 "repo": session.full_name,
                 "empty": True,
+                "view": view,
                 "default_branch": session.default_branch,
+                "branches": [],
                 "commits": [],
                 "refs": [],
                 "warnings": ["repository has no commits yet"],
             }
-        commits = E.read_commits(session.path)
+        commits = E.read_commits(session.path, [view] if view else None)
     by_commit: dict[str, list[str]] = {}
     for ref in refs:
         by_commit.setdefault(ref.commit, []).append(ref.short)
@@ -198,7 +204,9 @@ def graph(sid: str, user_id: int | None = None) -> dict:
         "session": session.id,
         "repo": session.full_name,
         "empty": False,
+        "view": view,
         "default_branch": session.default_branch,
+        "branches": sorted(r.short for r in refs if r.name.startswith("refs/heads/")),
         "commits": [
             {
                 "sha": c.sha,

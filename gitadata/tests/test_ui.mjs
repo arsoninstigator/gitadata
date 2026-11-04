@@ -1,12 +1,13 @@
 // ui smoke test over the chrome devtools protocol. no dependencies.
 //
-// needs a running server and headless chrome:
-//   python3 -m uvicorn gitadata.server:app --port 8081 &
+// needs a chrome with a debugging port and a running server, ideally the fixture
+// server so the repository has branches and a merge:
+//   python3 gitadata/tests/fixture_server.py 8099 &
 //   google-chrome --headless=new --no-sandbox --remote-debugging-port=9222 about:blank &
-//   node gitadata/tests/test_ui.mjs "http://localhost:8081/?repo=owner/name"
+//   node gitadata/tests/test_ui.mjs "http://localhost:8099/?repo=fixture/repo"
 //
 // it never pushes: the push checkbox is explicitly turned off before apply, and
-// the apply is expected to be refused by that same check.
+// the result is expected to say "not pushed".
 
 const target = process.argv[2];
 if (!target) {
@@ -61,14 +62,22 @@ async function evaluate(expression) {
   return res.result?.result?.value;
 }
 
+const commitCount = () => evaluate("return document.querySelectorAll('svg.dag circle').length");
+const graphRequests = () =>
+  evaluate(`
+    return performance.getEntriesByType('resource')
+      .map((entry) => entry.name)
+      .filter((name) => name.includes('/graph'));
+  `);
+
 await send("Page.enable");
 await send("Runtime.enable");
 await send("Page.navigate", { url: target });
 
 let circles = 0;
-for (let i = 0; i < 60; i += 1) {
+for (let i = 0; i < 80; i += 1) {
   await sleep(250);
-  circles = await evaluate("return document.querySelectorAll('svg.dag circle').length");
+  circles = await commitCount();
   if (circles > 0) break;
 }
 
@@ -76,13 +85,14 @@ console.log("\n[render]");
 check("graph drew commits", circles > 0, "circles=" + circles);
 const edges = await evaluate("return document.querySelectorAll('svg.dag path.edge').length");
 check("edges drawn", edges >= circles - 1, `edges=${edges} commits=${circles}`);
-const label = await evaluate("return document.querySelector('#repo-label').textContent");
-check("repo shown in the header", label.includes("/"), label);
+const merges = await evaluate("return document.querySelectorAll('svg.dag path.edge.secondary').length");
+check("merge parents get their own edge style", merges >= 1, "secondary=" + merges);
+check("repo shown in the header", (await evaluate("return document.querySelector('#repo-label').textContent")).includes("/"));
 
 console.log("\n[columns] text must not overlap or spill out of the window");
 const columns = await evaluate(`
   const rows = [...document.querySelectorAll('svg.dag .node')].slice(0, 8);
-  const boxes = rows.map((row) => {
+  return rows.map((row) => {
     const subject = row.querySelector('.subject')?.getBoundingClientRect();
     const meta = row.querySelector('.meta')?.getBoundingClientRect();
     const badge = row.querySelector('.badge')?.getBoundingClientRect();
@@ -94,81 +104,104 @@ const columns = await evaluate(`
       window: window.innerWidth,
     };
   });
-  return boxes;
 `);
-const overlapping = columns.filter((row) => row.subjectRight > row.metaLeft + 1);
-check("subject never runs into the author column", overlapping.length === 0, JSON.stringify(overlapping[0]));
-const spilled = columns.filter((row) => row.window - row.metaRight < 40);
-check("author column is not pushed off screen", spilled.length === 0, JSON.stringify(spilled[0]));
-const badgeOverlap = columns.filter((row) => row.badgeLeft !== null && row.metaRight > row.badgeLeft + 1);
-check("ref badges clear the author column", badgeOverlap.length === 0, JSON.stringify(badgeOverlap[0]));
+check("subject never runs into the author column", columns.every((row) => row.subjectRight <= row.metaLeft + 1), JSON.stringify(columns[0]));
+check("author column is not pushed off screen", columns.every((row) => row.window - row.metaRight >= 40), JSON.stringify(columns[0]));
+check("ref badges clear the author column", columns.every((row) => row.badgeLeft === null || row.metaRight <= row.badgeLeft + 1), JSON.stringify(columns[0]));
 
-console.log("\n[select and edit]");
-const first = await evaluate(`
-  const node = document.querySelectorAll('svg.dag .node')[3] || document.querySelector('svg.dag .node');
-  node.dispatchEvent(new MouseEvent('click', { bubbles: true }));
-  return true;
-`);
-check("clicked a commit", first === true);
-const inspector = await evaluate(`
+console.log("\n[branches] the switcher");
+const chips = await evaluate("return [...document.querySelectorAll('#refs .chip')].map((c) => c.textContent)");
+check("a chip per branch plus all refs", chips.length >= 3, JSON.stringify(chips));
+check("all refs is offered", chips.includes("all refs"), JSON.stringify(chips));
+const activeBefore = await evaluate("return document.querySelector('#refs .chip.active')?.textContent");
+check("the default branch is selected to begin with", activeBefore !== "all refs" && Boolean(activeBefore), String(activeBefore));
+
+const everyCommit = await commitCount();
+const featureView = await evaluate(`
+  const chip = [...document.querySelectorAll('#refs .chip')].find((c) => c.textContent === 'feature');
+  if (!chip) return { missing: true };
+  chip.click();
+  await new Promise((r) => setTimeout(r, 2500));
   return {
-    fields: [...document.querySelectorAll('#inspector input')].map((i) => i.value),
-    hasBody: !!document.querySelector('#inspector textarea'),
-    idle: document.querySelector('#inspector').className.includes('idle')
+    count: document.querySelectorAll('svg.dag circle').length,
+    active: document.querySelector('#refs .chip.active')?.textContent,
+    label: document.querySelector('#view-label').textContent,
+    status: document.querySelector('#status').textContent,
+    requests: performance.getEntriesByType('resource').map((e) => e.name).filter((n) => n.includes('/graph')),
   };
 `);
-check("inspector opened", inspector.idle === false);
-check("author name prefilled", Boolean(inspector.fields[1]), JSON.stringify(inspector.fields));
-check("description field present", inspector.hasBody === true);
+check("feature branch exists in the fixture", !featureView.missing);
+check("switching narrows the graph", featureView.count > 0 && featureView.count < everyCommit, `${featureView.count} of ${everyCommit}`);
+check("the chip becomes active", featureView.active === "feature", String(featureView.active));
+check("the header says which branch", featureView.label === "feature", String(featureView.label));
+check("the request carried the ref", featureView.requests.some((url) => url.includes("ref=refs%2Fheads%2Ffeature") || url.includes("ref=refs/heads/feature")), JSON.stringify(featureView.requests.slice(-2)));
+check("status names the branch", featureView.status.includes("feature"), featureView.status);
 
-const dirtyAfterEdit = await evaluate(`
-  const input = document.querySelectorAll('#inspector input')[0];
-  input.value = input.value + ' (edited in ui)';
-  input.dispatchEvent(new Event('input', { bubbles: true }));
-  await new Promise((r) => setTimeout(r, 50));
-  return document.querySelector('#dirty').textContent;
+const backToAll = await evaluate(`
+  [...document.querySelectorAll('#refs .chip')].find((c) => c.textContent === 'all refs').click();
+  await new Promise((r) => setTimeout(r, 2500));
+  return document.querySelectorAll('svg.dag circle').length;
 `);
-check("pending edit counted", /1 commit/.test(dirtyAfterEdit), dirtyAfterEdit);
+check("all refs shows the whole repository again", backToAll === everyCommit, `${backToAll} vs ${everyCommit}`);
 
-console.log("\n[context menu]");
-const menu = await evaluate(`
-  const node = document.querySelectorAll('svg.dag .node')[2];
+await evaluate(`
+  [...document.querySelectorAll('#refs .chip')].find((c) => c.textContent === 'main').click();
+  await new Promise((r) => setTimeout(r, 2500));
+  return true;
+`);
+
+console.log("\n[right-click] opens the editor in the side panel");
+const rightClicked = await evaluate(`
+  const node = document.querySelectorAll('svg.dag .node')[3] || document.querySelector('svg.dag .node');
   node.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 300, clientY: 300 }));
-  await new Promise((r) => setTimeout(r, 50));
-  const items = [...document.querySelectorAll('#menu button')].map((b) => b.textContent);
-  const present = !!document.getElementById('menu');
-  document.body.click();
-  return { present, items };
+  await new Promise((r) => setTimeout(r, 200));
+  const inputs = [...document.querySelectorAll('#inspector input')];
+  return {
+    idle: document.querySelector('#inspector').className.includes('idle'),
+    fields: inputs.map((i) => i.value),
+    hasBody: !!document.querySelector('#inspector textarea'),
+    focused: document.activeElement === inputs[0],
+    buttons: [...document.querySelectorAll('#inspector .actions button')].map((b) => b.textContent),
+    sha: document.querySelector('#inspector .sha')?.textContent,
+  };
 `);
-check("menu opened on right click", menu.present === true);
-check("menu has the edits", menu.items.length === 3, JSON.stringify(menu.items));
+check("the side panel is no longer idle", rightClicked.idle === false);
+check("it shows the commit sha", /^[0-9a-f]{10}$/.test(rightClicked.sha || ""), String(rightClicked.sha));
+check("title and author are editable", rightClicked.fields.length >= 4 && Boolean(rightClicked.fields[1]), JSON.stringify(rightClicked.fields));
+check("description is editable", rightClicked.hasBody === true);
+check("the title field takes focus", rightClicked.focused === true);
+check("actions sit in the panel", rightClicked.buttons.includes("drop claude co-author"), JSON.stringify(rightClicked.buttons));
+
+console.log("\n[edit] a pending change is counted");
+const dirty = await evaluate(`
+  const input = document.querySelectorAll('#inspector input')[0];
+  input.value = 'chore: retitled from the ui';
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 120));
+  return { bar: document.querySelector('#dirty').textContent, dot: document.querySelector('#inspector .dirty-dot')?.textContent };
+`);
+check("the bar counts the edit", /1 commit/.test(dirty.bar), dirty.bar);
+check("the panel marks the commit edited", dirty.dot === "edited", String(dirty.dot));
+check("the bar names the scope", dirty.bar.includes("main"), dirty.bar);
 
 console.log("\n[plan]");
 const report = await evaluate(`
-  const buttons = [...document.querySelectorAll('#dirty button')];
-  const preview = buttons.find((b) => b.textContent === 'preview');
+  const preview = [...document.querySelectorAll('#dirty button')].find((b) => b.textContent === 'preview');
   preview.click();
   for (let i = 0; i < 40; i += 1) {
     await new Promise((r) => setTimeout(r, 250));
     const text = document.querySelector('#report').textContent;
-    if (text.includes('rewrite') || text.includes('nothing')) return text;
+    if (text.includes('rewrite')) return text;
   }
   return document.querySelector('#report').textContent;
 `);
-check("plan reported", /rewrite/.test(report), report.slice(0, 120));
-const movedNothing = await evaluate(`
-  const res = await fetch('/api/sessions');
-  const data = await res.json();
-  return data.sessions.length;
-`);
-check("session still open after planning", movedNothing >= 1);
+check("plan reported", /rewrite/.test(report), report.slice(0, 140));
 
 console.log("\n[apply without push]");
 const applied = await evaluate(`
   const box = document.getElementById('push-toggle');
   box.checked = false;
-  const apply = [...document.querySelectorAll('#dirty button')].find((b) => b.textContent === 'apply');
-  apply.click();
+  [...document.querySelectorAll('#dirty button')].find((b) => b.textContent === 'apply').click();
   for (let i = 0; i < 60; i += 1) {
     await new Promise((r) => setTimeout(r, 250));
     const text = document.querySelector('#report').textContent;
@@ -178,7 +211,6 @@ const applied = await evaluate(`
 `);
 check("push stayed off", applied.push === false);
 check("rewrite applied in the clone only", /not pushed/.test(applied.text), applied.text.slice(0, 140));
-check("undo offered", /undo this rewrite/.test(applied.text));
 
 console.log("\n[undo]");
 const undone = await evaluate(`

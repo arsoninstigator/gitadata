@@ -4,7 +4,8 @@ deterministic commit-metadata rewriting for already-pushed repositories.
 right-click a commit, fix its title, author or dates, and the rewrite is carried
 through every descendant so the history stays internally consistent.
 
-status: engine, api, per-user github auth and a working web ui. not deployed.
+status: engine, api, per-user github auth and a working web ui with branch
+switching. not deployed.
 
 ```
 gitadata/
@@ -15,7 +16,7 @@ gitadata/
   server.py              fastapi app, serves the ui
   cli.py                 graph / plan / apply / backups / undo
   web/                   commit graph, inspector, plan preview
-  tests/                 38 engine, 27 session, 34 oauth, 32 api, 16 layout, 19 ui
+  tests/                 38 engine, 38 session, 34 oauth, 32 api, 16 layout, 30 ui
 docs/plan.md             product and architecture notes
 ```
 
@@ -58,10 +59,25 @@ local development without registering an oauth app: run with
 `GITADATA_DEV_PAT=1` and `GITHUB_TOKEN` set. `/api/me` reports `dev: true` and the
 ui says so. never run that way on a shared host.
 
+## the ui
+
+- a row of chips switches between branches, or shows every ref at once. switching
+  a branch narrows the graph to what that branch can reach, and makes it the
+  rewrite scope, so an edit cannot quietly land on a branch you were not looking
+  at.
+- left click selects a commit, right click selects it and opens its metadata in
+  the side panel, with the title selected and ready to type over.
+- the panel edits title, description, author name and email, author date and
+  committer date, plus a one-click strip of `co-authored-by` lines that mention
+  claude, and a copy sha action.
+- the bottom bar counts pending edits, names the branches they will rewrite, and
+  offers preview and apply. preview is the whole point: it lists old sha to new
+  sha per ref before anything moves.
+
 ## how it works
 
 1. a session clones the repository bare and blob-less into a temp dir.
-2. the ui reads the commit dag from `/graph`.
+2. the ui reads the commit dag from `/graph`, optionally scoped with `?ref=main`.
 3. an edit becomes a plan: old sha to new sha per ref, nothing moved yet.
 4. apply snapshots the refs under `refs/gitadata/backup/<ts>/`, rebuilds the
    commits, and optionally force-pushes with a lease on what we cloned.
@@ -80,7 +96,7 @@ get    /api/github/me
 get    /api/github/repos?limit=50
 post   /api/sessions                      {"repo": "owner/name"}
 get    /api/sessions
-get    /api/sessions/{sid}/graph
+get    /api/sessions/{sid}/graph?ref=main
 post   /api/sessions/{sid}/plan           {"edits": {...}, "refs": ["main"]}
 post   /api/sessions/{sid}/apply          {"edits": {...}, "refs": ["main"], "push": true}
 get    /api/sessions/{sid}/backups
@@ -109,6 +125,7 @@ python3 gitadata/tests/test_sessions.py      # full session against a local remo
 python3 gitadata/tests/test_oauth.py         # pkce, state, cookies, expiry
 python3 gitadata/tests/test_api_auth.py      # auth gate, handshake, isolation
 node gitadata/tests/test_layout.mjs          # lane layout, pure functions
+python3 gitadata/tests/fixture_server.py 8099   # local repo with branches and a merge
 node gitadata/tests/test_ui.mjs <url>        # needs chrome and a running server
 ```
 
