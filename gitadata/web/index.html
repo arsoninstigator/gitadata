@@ -3,23 +3,35 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
     <title>gitadata</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
     <link rel="stylesheet" href="/web/style.css" />
+    <script src="https://unpkg.com/lucide@1.68.0/dist/umd/lucide.min.js" defer></script>
   </head>
   <body>
     <header class="bar">
       <div class="brand">
-        <span class="mark">gitadata</span>
+        <span class="mark"><i data-lucide="git-branch"></i>gitadata</span>
         <span class="repo" id="repo-label">no repository</span>
       </div>
       <form id="open" class="open">
         <input id="repo-input" list="repo-options" placeholder="owner/repo" autocomplete="off" />
         <datalist id="repo-options"></datalist>
-        <button class="primary" type="submit">open</button>
+        <button class="primary" type="submit" title="open repository">
+          <i data-lucide="arrow-right"></i>open
+        </button>
       </form>
       <div class="who">
         <span id="who">signed out</span>
-        <button class="ghost" id="signout" hidden>sign out</button>
+        <button class="ghost" id="signout" hidden>
+          <i data-lucide="log-out"></i>sign out
+        </button>
       </div>
     </header>
 

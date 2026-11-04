@@ -37,6 +37,18 @@ const el = (tag, attrs = {}, children = []) => {
   return node;
 };
 
+const icon = (name) => el("i", { "data-lucide": name });
+
+function refreshIcons() {
+  const lucide = window.lucide;
+  if (!lucide || typeof lucide.createIcons !== "function") return;
+  try {
+    lucide.createIcons({ attrs: { "stroke-width": 1.75 } });
+  } catch {
+    /* icons are decoration: never let them break the app */
+  }
+}
+
 async function api(path, options = {}) {
   const res = await fetch(path, {
     headers: { "content-type": "application/json" },
@@ -82,14 +94,16 @@ async function showSignIn(reason) {
   }
 
   const card = el("div", { class: "signin" }, [
-    el("h2", { text: "gitadata" }),
+    el("h2", {}, [icon("git-branch"), "gitadata"]),
     el("p", {
       class: "muted",
       text: "edit the metadata of commits that are already pushed. you sign in with your own github account, and the token stays on the server.",
     }),
   ]);
   if (config.oauth) {
-    card.append(el("a", { class: "primary solid", href: "/auth/github/start", text: "sign in with github" }));
+    card.append(
+      el("a", { class: "primary solid", href: "/auth/github/start" }, [icon("log-in"), "sign in with github"])
+    );
   } else {
     card.append(
       el("p", {
@@ -100,6 +114,7 @@ async function showSignIn(reason) {
   }
   if (reason) card.append(el("p", { class: "muted", text: reason }));
   $("#graph").replaceChildren(card);
+  refreshIcons();
   status("not signed in");
 }
 
@@ -277,23 +292,30 @@ function renderGraph() {
 function renderRefs() {
   const branches = state.graph.refs.filter((r) => r.name.startsWith("refs/heads/"));
   const chips = [
-    el("button", {
-      class: "chip" + (state.viewRef ? "" : " active"),
-      text: "all refs",
-      title: "every branch and tag at once",
-      onclick: () => switchView(null),
-    }),
+    el(
+      "button",
+      {
+        class: "chip" + (state.viewRef ? "" : " active"),
+        title: "every branch and tag at once",
+        onclick: () => switchView(null),
+      },
+      [icon("layers"), "all refs"]
+    ),
     ...branches.map((ref) =>
-      el("button", {
-        class: "chip" + (state.viewRef === ref.name ? " active" : ""),
-        text: ref.short,
-        title: ref.commit.slice(0, 10),
-        onclick: () => switchView(ref.name),
-      })
+      el(
+        "button",
+        {
+          class: "chip" + (state.viewRef === ref.name ? " active" : ""),
+          title: ref.commit.slice(0, 10),
+          onclick: () => switchView(ref.name),
+        },
+        [icon("git-branch"), ref.short]
+      )
     ),
   ];
   $("#refs").replaceChildren(...chips);
   $("#view-label").textContent = branchLabel();
+  refreshIcons();
 }
 
 // ---------------------------------------------------------------------------
@@ -376,28 +398,31 @@ function renderInspector() {
     field("author date", "author_date", values.authorDate, "datetime-local"),
     field("committer date", "committer_date", values.committerDate, "datetime-local"),
     el("div", { class: "actions" }, [
-      el("button", {
-        class: "ghost",
-        text: "drop claude co-author",
-        title: "strip co-authored-by lines that mention claude",
-        onclick: () => dropClaude(commit.sha),
-      }),
-      el("button", {
-        class: "ghost",
-        text: "copy sha",
-        onclick: () => {
-          navigator.clipboard?.writeText(commit.sha);
-          status("sha copied");
+      el(
+        "button",
+        { class: "ghost", title: "strip co-authored-by lines that mention claude", onclick: () => dropClaude(commit.sha) },
+        [icon("eraser"), "drop claude co-author"]
+      ),
+      el(
+        "button",
+        {
+          class: "ghost",
+          title: "copy the full sha",
+          onclick: () => {
+            navigator.clipboard?.writeText(commit.sha);
+            status("sha copied");
+          },
         },
-      }),
-      el("button", {
-        class: "ghost",
-        text: "reset this commit",
-        disabled: !dirty,
-        onclick: () => resetCommit(commit.sha),
-      }),
+        [icon("copy"), "copy sha"]
+      ),
+      el(
+        "button",
+        { class: "ghost", title: "discard changes to this commit", disabled: !dirty, onclick: () => resetCommit(commit.sha) },
+        [icon("rotate-ccw"), "reset"]
+      ),
     ])
   );
+  refreshIcons();
 }
 
 function dropClaude(sha) {
@@ -467,9 +492,10 @@ function renderDirty() {
     }),
     el("input", { type: "checkbox", id: "push-toggle", checked: true }),
     el("label", { for: "push-toggle", text: "push to github" }),
-    el("button", { class: "primary", text: "preview", disabled: count === 0, onclick: preview }),
-    el("button", { class: "primary solid", text: "apply", disabled: count === 0, onclick: apply })
+    el("button", { class: "primary", disabled: count === 0, onclick: preview }, [icon("eye"), "preview"]),
+    el("button", { class: "primary solid", disabled: count === 0, onclick: apply }, [icon("upload"), "apply"])
   );
+  refreshIcons();
 }
 
 async function preview() {
@@ -492,6 +518,7 @@ async function preview() {
     }
     for (const warning of plan.warnings) lines.push(el("p", { class: "warn", text: warning }));
     $("#report").replaceChildren(...lines);
+    refreshIcons();
     status("plan ready, nothing has moved yet");
   } catch (err) {
     status(err.message, "error");
@@ -514,8 +541,9 @@ async function apply() {
     );
     for (const note of result.prechecks?.notes || []) lines.push(el("p", { class: "warn", text: note }));
     if (result.push_output) lines.push(el("pre", { class: "out", text: result.push_output }));
-    lines.push(el("button", { class: "ghost", text: "undo this rewrite", onclick: undo }));
+    lines.push(el("button", { class: "ghost", onclick: undo }, [icon("rotate-ccw"), "undo this rewrite"]));
     $("#report").replaceChildren(...lines);
+    refreshIcons();
     state.selected = null;
     await loadGraph();
     status(result.pushed ? "rewritten and pushed" : "rewritten in the clone only", "ok");
@@ -576,6 +604,9 @@ async function boot() {
 
   renderInspector();
   renderDirty();
+
+  refreshIcons();
+  window.addEventListener("load", refreshIcons); // icons may arrive after first paint
 
   const wanted = new URLSearchParams(location.search).get("repo");
   if (wanted) {

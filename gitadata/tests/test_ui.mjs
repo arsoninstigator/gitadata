@@ -89,6 +89,28 @@ const merges = await evaluate("return document.querySelectorAll('svg.dag path.ed
 check("merge parents get their own edge style", merges >= 1, "secondary=" + merges);
 check("repo shown in the header", (await evaluate("return document.querySelector('#repo-label').textContent")).includes("/"));
 
+console.log("\n[theme] dark surface, poppins, lucide icons");
+const theme = await evaluate(`
+  await document.fonts.ready;
+  const body = getComputedStyle(document.body);
+  const html = getComputedStyle(document.documentElement);
+  return {
+    bg: body.backgroundColor,
+    htmlBg: html.backgroundColor,
+    font: body.fontFamily,
+    poppins: document.fonts.check('13px Poppins'),
+    icons: document.querySelectorAll('svg.lucide').length,
+    chipIcons: document.querySelectorAll('#refs .chip svg.lucide').length,
+    dark: getComputedStyle(document.documentElement).colorScheme,
+  };
+`);
+check("page background is #121212", theme.bg === "rgb(18, 18, 18)" && theme.htmlBg === "rgb(18, 18, 18)", theme.bg + " / " + theme.htmlBg);
+check("body text is poppins", /Poppins/i.test(theme.font), theme.font);
+check("poppins actually loaded", theme.poppins === true, String(theme.poppins));
+check("icons rendered as svg", theme.icons >= 4, "icons=" + theme.icons);
+check("branch chips carry icons", theme.chipIcons >= 3, "chipIcons=" + theme.chipIcons);
+check("the document declares a dark color scheme", theme.dark === "dark", String(theme.dark));
+
 console.log("\n[columns] text must not overlap or spill out of the window");
 const columns = await evaluate(`
   const rows = [...document.querySelectorAll('svg.dag .node')].slice(0, 8);
