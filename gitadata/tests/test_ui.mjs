@@ -111,6 +111,20 @@ check("icons rendered as svg", theme.icons >= 4, "icons=" + theme.icons);
 check("branch chips carry icons", theme.chipIcons >= 3, "chipIcons=" + theme.chipIcons);
 check("the document declares a dark color scheme", theme.dark === "dark", String(theme.dark));
 
+const accent = await evaluate(`
+  const raw = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+  const probe = document.createElement('div');
+  probe.style.color = raw;
+  document.body.append(probe);
+  const rgb = getComputedStyle(probe).color;
+  probe.remove();
+  return { raw, rgb };
+`);
+const channels = (accent.rgb.match(/\d+/g) || []).map(Number);
+check("accent is a pastel blue", channels.length === 3 && channels[2] > channels[0] && channels[2] > channels[1], accent.rgb);
+check("accent is not green", channels[1] < 220, accent.rgb);
+check("accent is light enough to read on #121212", channels[0] > 120, accent.rgb);
+
 console.log("\n[columns] text must not overlap or spill out of the window");
 const columns = await evaluate(`
   const rows = [...document.querySelectorAll('svg.dag .node')].slice(0, 8);

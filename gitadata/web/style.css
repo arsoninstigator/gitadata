@@ -7,12 +7,12 @@
   --line-soft: #1f1f1f;
   --text: #ededed;
   --muted: #8a8a8a;
-  --accent: #7ddcaa;
-  --accent-dim: rgba(125, 220, 170, 0.12);
-  --accent-ink: #0d1a14;
+  --accent: #a8c8f0;
+  --accent-dim: rgba(168, 200, 240, 0.14);
+  --accent-ink: #101825;
   --warn: #e3b978;
   --error: #f08a8a;
-  --ok: #7ddcaa;
+  --ok: #a8c8f0;
   --lane: #3a3a3a;
   --font: "Poppins", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
@@ -111,10 +111,10 @@ button {
 button:hover:not(:disabled) { background: var(--panel-2); border-color: #333; }
 button:disabled { opacity: 0.4; cursor: default; }
 
-button.primary { border-color: #2f4a3d; color: var(--accent); background: transparent; }
+button.primary { border-color: #2d3f57; color: var(--accent); background: transparent; }
 button.primary:hover:not(:disabled) { background: var(--accent-dim); }
 button.primary.solid { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-button.primary.solid:hover:not(:disabled) { background: #8ee6b6; }
+button.primary.solid:hover:not(:disabled) { background: #bdd6f6; }
 button.ghost {
   border-color: transparent;
   background: transparent;
@@ -234,7 +234,7 @@ svg.dag .badge {
   background: #6b6b6b;
   transition: transform 0.15s, background 0.15s;
 }
-.dirty input[type="checkbox"]:checked { background: var(--accent-dim); border-color: #2f4a3d; }
+.dirty input[type="checkbox"]:checked { background: var(--accent-dim); border-color: #2d3f57; }
 .dirty input[type="checkbox"]:checked::after { transform: translateX(13px); background: var(--accent); }
 .dirty label { color: var(--muted); cursor: pointer; }
 
@@ -356,7 +356,7 @@ svg.dag .badge {
   font-size: 12px;
   font-weight: 500;
 }
-.signin a.primary:hover { background: #8ee6b6; }
+.signin a.primary:hover { background: #bdd6f6; }
 
 @media (max-width: 980px) {
   .layout { grid-template-columns: minmax(0, 1fr) 320px; }
