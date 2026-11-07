@@ -1,0 +1,32 @@
+{
+  "schema": "forge.manifest/v1",
+  "note": "this file is what a self-hostable tag is supposed to point at. the forge validates the same shape over http.",
+  "project": {
+    "path": "arsoninstigator/gitadata",
+    "description": "a lightweight git forge: private branches, private paths, promoted urls",
+    "tags": ["self-hostable"]
+  },
+  "tags": [
+    {
+      "tag": "self-hostable",
+      "description": "runs from a checkout with no hosted control plane"
+    }
+  ],
+  "self_hostable": true,
+  "dependencies": [
+    {
+      "name": "git",
+      "kind": "runtime",
+      "version": ">=2.30",
+      "url": "https://git-scm.com",
+      "required": true
+    },
+    {
+      "name": "python3",
+      "kind": "runtime",
+      "version": ">=3.9",
+      "url": "https://www.python.org",
+      "required": true
+    }
+  ]
+}

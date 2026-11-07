@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitadata-forge"
+version = "0.1.0"
+description = "a lightweight git forge with private branches, private paths and promoted urls"
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = []
+
+[project.scripts]
+forge = "forge.cli:main"
+
+[tool.setuptools]
+packages = ["forge"]
